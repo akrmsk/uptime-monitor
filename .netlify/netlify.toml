@@ -1,0 +1,30 @@
+functionsDirectory = "D:\\UptimeMonitor\\netlify\\functions"
+functionsDirectoryOrigin = "default"
+plugins = []
+headers = []
+redirects = []
+
+[build]
+publish = "D:\\UptimeMonitor\\dist\\client"
+publishOrigin = "ui"
+commandOrigin = "ui"
+command = "remix vite:build"
+functions = "D:\\UptimeMonitor\\netlify\\functions"
+
+[build.environment]
+
+[build.processing]
+
+[build.processing.css]
+
+[build.processing.html]
+
+[build.processing.images]
+
+[build.processing.js]
+
+[build.services]
+
+[functions]
+
+[functions."*"]

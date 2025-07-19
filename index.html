@@ -1,0 +1,384 @@
+<!-- FILE 1: index.html (place this in D:\UptimeMonitor) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Uptime Monitor with Gemini AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .animate-pulse-fast { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        #modal-content { -ms-overflow-style: none; scrollbar-width: none; }
+        #modal-content::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="app" class="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-gray-900">Uptime Monitor Dashboard</h1>
+            <p class="mt-2 text-lg text-gray-600">Your websites' status, at a glance. Supercharged by ✨<span class="font-semibold text-indigo-600">Gemini AI</span>✨.</p>
+            <div id="auth-info" class="mt-4 text-xs text-gray-500 bg-white border border-gray-200 p-2 rounded-md inline-block">
+                Loading user session...
+            </div>
+        </header>
+
+        <main class="space-y-10">
+            <section id="controls">
+                <div class="bg-white p-6 rounded-xl shadow-lg">
+                    <h2 class="text-xl font-semibold mb-1 text-gray-900">Control Panel</h2>
+                    <p class="text-sm text-gray-500 mb-6">Use this section to add new sites for monitoring or to set the email address where outage alerts will be sent.</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div>
+                            <form id="add-website-form" class="space-y-3">
+                                <label for="website-url" class="font-medium text-gray-700">Add a new website</label>
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <input type="url" id="website-url" placeholder="https://example.com" required class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+                                    <button type="submit" class="bg-indigo-600 text-white font-semibold py-3 px-5 rounded-lg hover:bg-indigo-700 transition-colors">Add Website</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div>
+                            <form id="set-email-form" class="space-y-3">
+                                 <label for="alert-email" class="font-medium text-gray-700">Set alert email</label>
+                                <div class="flex flex-col sm:flex-row gap-2">
+                                    <input type="email" id="alert-email" placeholder="you@example.com" required class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+                                    <button type="submit" class="bg-green-600 text-white font-semibold py-3 px-5 rounded-lg hover:bg-green-700 transition-colors">Save Email</button>
+                                </div>
+                            </form>
+                             <p id="email-saved-confirm" class="text-green-600 text-sm font-medium mt-2 hidden">Email saved successfully!</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="dashboard">
+                <h2 class="text-3xl font-bold mb-1 text-gray-900">Monitoring Dashboard</h2>
+                <p class="text-base text-gray-600 mb-6">This is a live overview of your monitored websites. The status is updated automatically by our backend service.</p>
+                <div id="websites-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <p id="loading-sites" class="text-center text-gray-500 py-8 col-span-full">Loading your monitored sites...</p>
+                </div>
+            </section>
+        </main>
+        
+        <footer class="text-center mt-16 text-sm text-gray-500">
+            <p>&copy; 2024 Simple Uptime Monitor. A Demo by Gemini.</p>
+        </footer>
+    </div>
+
+    <!-- Modals -->
+    <div id="confirm-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 hidden z-50 transition-opacity duration-300">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 scale-95">
+            <div class="p-6 text-center">
+                <h3 id="confirm-modal-title" class="text-lg font-semibold mb-2">Are you sure?</h3>
+                <p id="confirm-modal-body" class="text-gray-600 mb-6">Do you really want to perform this action?</p>
+                <div class="flex justify-center gap-4">
+                    <button id="confirm-cancel-btn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-medium">Cancel</button>
+                    <button id="confirm-ok-btn" class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="gemini-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 hidden z-50 transition-opacity duration-300">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col transform transition-all duration-300 scale-95">
+            <div class="p-4 border-b flex justify-between items-center">
+                <h3 id="modal-title" class="text-xl font-semibold text-gray-800">✨ AI Assistant</h3>
+                <button id="modal-close-btn" class="text-2xl text-gray-500 hover:text-gray-800">&times;</button>
+            </div>
+            <div id="modal-content" class="p-6 overflow-y-auto whitespace-pre-wrap prose max-w-none"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // ===================================================================================
+        // CRITICAL CONFIGURATION:
+        // You MUST replace the placeholder values below with your actual Supabase details.
+        // You can find these in your Supabase project dashboard under Settings > API.
+        // ===================================================================================
+        const SUPABASE_URL = 'https://jxxnuulscsstterxmofk.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp4eG51dWxzY3NzdHRlcnhtb2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5MjAxMDgsImV4cCI6MjA2ODQ5NjEwOH0.Dgu8kJ9hL89Ua6aDZSge3zOmCbGYlznN9kfMEBlNcPY';
+
+        let db;
+        try {
+            const { createClient } = supabase;
+            db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        } catch (e) {
+            console.error(e);
+        }
+
+        // --- APP STATE ---
+        let userId = null;
+
+        // --- DOM Elements ---
+        const appDiv = document.getElementById('app');
+        const addWebsiteForm = document.getElementById('add-website-form');
+        const websiteUrlInput = document.getElementById('website-url');
+        const websitesList = document.getElementById('websites-list');
+        const loadingSitesMessage = document.getElementById('loading-sites');
+        const authInfoDiv = document.getElementById('auth-info');
+        const setEmailForm = document.getElementById('set-email-form');
+        const alertEmailInput = document.getElementById('alert-email');
+        const emailSavedConfirm = document.getElementById('email-saved-confirm');
+        const geminiModal = document.getElementById('gemini-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+        const confirmModal = document.getElementById('confirm-modal');
+        const confirmModalContainer = confirmModal.querySelector('div');
+        const geminiModalContainer = geminiModal.querySelector('div');
+        const confirmModalTitle = document.getElementById('confirm-modal-title');
+        const confirmModalBody = document.getElementById('confirm-modal-body');
+        const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
+        const confirmOkBtn = document.getElementById('confirm-ok-btn');
+
+        // --- AUTH & SESSION ---
+        function getOrCreateUserId() {
+            let id = localStorage.getItem('uptime_monitor_user_id');
+            if (!id) {
+                id = crypto.randomUUID();
+                localStorage.setItem('uptime_monitor_user_id', id);
+            }
+            return id;
+        }
+
+        // --- MODAL LOGIC ---
+        let confirmCallback = null;
+        function showConfirmModal(title, body, onConfirm) {
+            confirmModalTitle.textContent = title;
+            confirmModalBody.textContent = body;
+            confirmCallback = onConfirm;
+            confirmModal.classList.remove('hidden');
+            setTimeout(() => { confirmModal.style.opacity = '1'; confirmModalContainer.style.transform = 'scale(1)'; }, 10);
+        }
+        function hideConfirmModal() {
+            confirmModal.style.opacity = '0';
+            confirmModalContainer.style.transform = 'scale(0.95)';
+            setTimeout(() => { confirmModal.classList.add('hidden'); confirmCallback = null; }, 300);
+        }
+        confirmCancelBtn.addEventListener('click', hideConfirmModal);
+        confirmOkBtn.addEventListener('click', () => { if (confirmCallback) confirmCallback(); hideConfirmModal(); });
+
+        function showGeminiModal(title) {
+            modalTitle.textContent = title;
+            modalContent.innerHTML = `<div class="flex items-center justify-center space-x-2 py-10"><div class="w-4 h-4 rounded-full bg-indigo-500 animate-pulse"></div><div class="w-4 h-4 rounded-full bg-indigo-500 animate-pulse [animation-delay:0.2s]"></div><div class="w-4 h-4 rounded-full bg-indigo-500 animate-pulse [animation-delay:0.4s]"></div><span class="text-gray-600">AI is thinking...</span></div>`;
+            geminiModal.classList.remove('hidden');
+            setTimeout(() => { geminiModal.style.opacity = '1'; geminiModalContainer.style.transform = 'scale(1)'; }, 10);
+        }
+        function hideGeminiModal() { 
+            geminiModal.style.opacity = '0';
+            geminiModalContainer.style.transform = 'scale(0.95)';
+            setTimeout(() => geminiModal.classList.add('hidden'), 300);
+        }
+        modalCloseBtn.addEventListener('click', hideGeminiModal);
+
+        // --- DATABASE LOGIC ---
+        async function fetchAndDisplayWebsites() {
+            if (!userId) return;
+            websitesList.innerHTML = '';
+            loadingSitesMessage.style.display = 'block';
+
+            try {
+                const { data: websites, error } = await db
+                    .from('websites')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .order('created_at', { ascending: true });
+
+                loadingSitesMessage.style.display = 'none';
+                if (error) {
+                    throw error;
+                }
+                
+                if (!websites || websites.length === 0) {
+                    websitesList.innerHTML = '<div class="text-center text-gray-500 py-10 bg-white rounded-lg shadow-md col-span-full"><p class="font-semibold">No websites added yet.</p><p>Add one from the Control Panel to start monitoring!</p></div>';
+                } else {
+                    websitesList.innerHTML = '';
+                    websites.forEach(website => {
+                        websitesList.appendChild(createWebsiteElement(website));
+                    });
+                }
+            } catch (error) {
+                console.error("Error fetching websites:", error);
+                loadingSitesMessage.style.display = 'none';
+                
+                const errorCard = document.createElement('div');
+                errorCard.className = "bg-red-100 border-l-4 border-red-500 text-red-800 p-4 rounded-lg shadow-lg col-span-full";
+                errorCard.innerHTML = `
+                    <p class="font-bold text-lg">Connection Error</p>
+                    <p class="mt-2">The application could not connect to the Supabase database. This is often caused by one of the following:</p>
+                    <ul class="list-disc list-inside mt-2 space-y-1 text-sm">
+                        <li><strong>Supabase Project Paused:</strong> Free Supabase projects are paused after 1 week of inactivity. Please go to your <a href="https://app.supabase.com" target="_blank" class="underline font-semibold">Supabase Dashboard</a> and ensure your project is active.</li>
+                        <li><strong>CORS Issues:</strong> If you are running this file locally, Supabase might be blocking the request. You need to deploy the site to Netlify first for it to work correctly.</li>
+                        <li><strong>Browser Extensions:</strong> Ad blockers or privacy extensions can sometimes block requests to Supabase. Try disabling them for this page.</li>
+                        <li><strong>Incorrect API Keys:</strong> Double-check that the <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> in your <code>index.html</code> file are correct.</li>
+                    </ul>
+                    <p class="mt-3 text-xs"><strong>Original Error:</strong> ${error.message}</p>
+                `;
+                websitesList.innerHTML = '';
+                websitesList.appendChild(errorCard);
+            }
+        }
+
+        addWebsiteForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!userId) return;
+            const url = websiteUrlInput.value.trim();
+            if (url) {
+                const { error } = await db
+                    .from('websites')
+                    .insert([{ 
+                        url: url, 
+                        user_id: userId, 
+                        status: 'Checking',
+                        created_at: new Date().toISOString()
+                    }]);
+                
+                if (error) console.error("Error adding website:", error);
+                else {
+                    websiteUrlInput.value = '';
+                    fetchAndDisplayWebsites(); // Refresh the list
+                }
+            }
+        });
+
+        async function removeWebsite(id) {
+            showConfirmModal('Confirm Deletion', 'Are you sure you want to stop monitoring this site?', async () => {
+                const { error } = await db.from('websites').delete().eq('id', id);
+                if (error) console.error("Error deleting website:", error);
+            });
+        }
+        
+        async function fetchUserEmail() {
+            if (!userId) return;
+            const { data, error } = await db.from('users').select('email').eq('id', userId).single();
+            if (data && data.email) alertEmailInput.value = data.email;
+        }
+
+        setEmailForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!userId) return;
+            const email = alertEmailInput.value.trim();
+            if (email) {
+                const { error } = await db.from('users').upsert({ id: userId, email: email }).select();
+                if (error) console.error("Error saving email:", error);
+                else {
+                    emailSavedConfirm.classList.remove('hidden');
+                    setTimeout(() => emailSavedConfirm.classList.add('hidden'), 3000);
+                }
+            }
+        });
+        
+        // --- REALTIME LISTENER ---
+        function listenForChanges() {
+            if (!userId) return;
+            db.channel('public:websites')
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'websites', filter: `user_id=eq.${userId}` }, payload => {
+                console.log('Change received!', payload);
+                fetchAndDisplayWebsites();
+              })
+              .subscribe();
+        }
+
+        // --- GEMINI API (No changes needed) ---
+        async function callGemini(prompt) {
+            const apiKey = "AIzaSyCAYaMtzMLxjllYME5cd-C2P3Fb8RJ5kVw";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+            try {
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0 && result.candidates[0].content.parts.length > 0) return result.candidates[0].content.parts[0].text;
+                return "No response from AI. Please try again.";
+            } catch (error) {
+                console.error("Gemini API call failed:", error);
+                return `Error: Could not reach the AI assistant. ${error.message}`;
+            }
+        }
+        async function handleAnalyzeOutage(url) {
+            showGeminiModal('✨ Analyzing Outage...');
+            const prompt = `My website "${url}" is currently down. Act as a helpful IT support specialist. Provide a concise, actionable checklist for a non-technical website owner to diagnose the problem. Format the response in Markdown. Use headings for categories (e.g., '### Check with your hosting provider', '### Review recent changes'). Keep it simple and encouraging.`;
+            const result = await callGemini(prompt);
+            modalContent.innerHTML = result.replace(/\n/g, '<br>');
+        }
+        async function handleDraftUpdate(url) {
+            showGeminiModal('✨ Drafting Status Update...');
+            const prompt = `My website "${url}" is currently down. Draft a short, professional, and empathetic message for me to post on social media (like Twitter) or a status page. Format the response in Markdown. The message should acknowledge the issue, reassure customers we are actively working on a fix, and apologize for the inconvenience. Do not make up an ETA. Provide 2-3 variations with slightly different tones under separate headings (e.g., '### Formal Update', '### Casual Update').`;
+            const result = await callGemini(prompt);
+            modalContent.innerHTML = result.replace(/\n/g, '<br>');
+        }
+
+        // --- UI RENDERING ---
+        function createWebsiteElement(website) {
+            const card = document.createElement('div');
+            card.className = 'bg-white p-5 rounded-xl shadow-lg flex flex-col justify-between transition-all hover:shadow-xl hover:-translate-y-1';
+            const statusInfo = getStatusInfo(website.status);
+            const lastCheckedString = website.last_checked ? new Date(website.last_checked).toLocaleString() : 'Never';
+            
+            let aiButtons = '';
+            if (website.status === 'Down') {
+                aiButtons = `<div class="border-t border-gray-200 mt-4 pt-4 flex flex-wrap gap-2">
+                                <button class="analyze-btn text-sm w-full sm:w-auto flex-grow text-center bg-purple-100 text-purple-800 font-semibold py-2 px-3 rounded-lg hover:bg-purple-200">✨ Analyze Outage</button>
+                                <button class="draft-btn text-sm w-full sm:w-auto flex-grow text-center bg-blue-100 text-blue-800 font-semibold py-2 px-3 rounded-lg hover:bg-blue-200">✨ Draft Update</button>
+                             </div>`;
+            }
+
+            card.innerHTML = `
+                <div>
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center gap-3">
+                            <div title="${statusInfo.title}" class="w-3 h-3 rounded-full flex-shrink-0 ${statusInfo.colorClass} ${statusInfo.pulseClass}"></div>
+                            <span class="font-semibold text-gray-700">${statusInfo.title}</span>
+                        </div>
+                        <button class="remove-btn text-gray-400 hover:text-red-500 font-semibold rounded-full w-8 h-8 flex items-center justify-center hover:bg-red-100">&times;</button>
+                    </div>
+                    <p class="font-bold text-lg text-gray-900 break-all mt-3">${website.url}</p>
+                    <p class="text-xs text-gray-500 mt-1">Last checked: ${lastCheckedString}</p>
+                </div>
+                ${aiButtons}
+            `;
+            
+            card.querySelector('.remove-btn').addEventListener('click', (e) => { e.stopPropagation(); removeWebsite(website.id); });
+            if (website.status === 'Down') {
+                card.querySelector('.analyze-btn').addEventListener('click', (e) => { e.stopPropagation(); handleAnalyzeOutage(website.url) });
+                card.querySelector('.draft-btn').addEventListener('click', (e) => { e.stopPropagation(); handleDraftUpdate(website.url) });
+            }
+            return card;
+        }
+
+        function getStatusInfo(status) {
+            switch(status) {
+                case 'Up': return { colorClass: 'bg-green-500', pulseClass: '', title: 'Up' };
+                case 'Down': return { colorClass: 'bg-red-500', pulseClass: '', title: 'Down' };
+                default: return { colorClass: 'bg-yellow-400', pulseClass: 'animate-pulse-fast', title: 'Checking...' };
+            }
+        }
+        
+        // --- INITIAL APP LOAD ---
+        window.onload = () => {
+            // Configuration check
+            if (SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY_HERE') {
+                appDiv.innerHTML = `
+                    <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg shadow-lg" role="alert">
+                      <p class="font-bold text-lg">Configuration Error</p>
+                      <p>You have not configured your Supabase credentials. Please open the <strong>index.html</strong> file and replace the placeholder values for <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> with your actual keys from your Supabase project dashboard.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            userId = getOrCreateUserId();
+            authInfoDiv.innerHTML = `User Session ID: <span class="font-mono bg-gray-200 px-1 rounded">${userId}</span>`;
+            fetchUserEmail();
+            fetchAndDisplayWebsites();
+            listenForChanges();
+        };
+    </script>
+</body>
+</html>
