@@ -2,119 +2,248 @@ const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
 const { Resend } = require('resend');
 
-// This is a scheduled function that runs every 5 minutes
+// Production-ready scheduled website monitoring
 exports.handler = async function(event, context) {
+    console.log('🚀 Starting scheduled website monitoring job');
+    
+    // Handle CORS for manual triggers
+    const headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+    };
+
+    if (event.httpMethod === 'OPTIONS') {
+        return { statusCode: 200, headers, body: '' };
+    }
+
     // --- CONFIGURATION ---
     const SUPABASE_URL = process.env.SUPABASE_URL;
     const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
     const FROM_EMAIL = process.env.FROM_EMAIL;
 
+    // Validate environment variables
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+        console.error('❌ Missing required environment variables');
+        return {
+            statusCode: 500,
+            headers,
+            body: JSON.stringify({ error: 'Server configuration error' })
+        };
+    }
+
     // Initialize clients
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    const resend = new Resend(RESEND_API_KEY);
-
-    console.log('Starting scheduled website check job.');
+    const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
     try {
-        // 1. Get all unique user IDs that have websites
-        const { data: users, error: usersError } = await supabase
+        // Get all websites that need checking
+        const { data: websites, error: websitesError } = await supabase
             .from('websites')
-            .select('user_id');
+            .select('*');
         
-        if (usersError) throw usersError;
-        if (!users || users.length === 0) {
-            console.log('No websites to check.');
-            return { statusCode: 200, body: 'No websites to check.' };
+        if (websitesError) {
+            console.error('❌ Error fetching websites:', websitesError);
+            throw websitesError;
+        }
+        
+        if (!websites || websites.length === 0) {
+            console.log('ℹ️ No websites to check');
+            return { 
+                statusCode: 200, 
+                headers,
+                body: JSON.stringify({ message: 'No websites to check' })
+            };
         }
 
-        // Get unique user IDs
-        const userIds = [...new Set(users.map(u => u.user_id))];
-        
-        // 2. Process websites for each user
-        for (const userId of userIds) {
-            await processUserWebsites(userId, supabase, resend, FROM_EMAIL);
+        console.log(`📊 Checking ${websites.length} websites...`);
+
+        // Process each website
+        const results = [];
+        for (const website of websites) {
+            const result = await checkSingleWebsite(website, supabase, resend, FROM_EMAIL);
+            results.push(result);
+            
+            // Small delay between checks to be respectful
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        console.log('Successfully completed scheduled website check job.');
-        return { statusCode: 200, body: 'Scheduled job completed successfully.' };
+        const summary = {
+            total: websites.length,
+            up: results.filter(r => r.status === 'Up').length,
+            down: results.filter(r => r.status === 'Down').length,
+            errors: results.filter(r => r.error).length
+        };
+
+        console.log(`✅ Monitoring job completed:`, summary);
+        
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({
+                success: true,
+                message: 'Monitoring job completed successfully',
+                summary,
+                results
+            })
+        };
 
     } catch (error) {
-        console.error('Error in scheduled checkWebsites job:', error);
-        return { statusCode: 500, body: `Scheduled job failed: ${error.message}` };
+        console.error('❌ Error in scheduled monitoring job:', error);
+        return {
+            statusCode: 500,
+            headers,
+            body: JSON.stringify({ 
+                error: 'Monitoring job failed',
+                details: error.message 
+            })
+        };
     }
 };
 
-async function processUserWebsites(userId, supabase, resend, fromEmail) {
-    // Get user's email
-    const { data: userData } = await supabase.from('users').select('email').eq('id', userId).single();
-    const userEmail = userData ? userData.email : null;
+async function checkSingleWebsite(website, supabase, resend, fromEmail) {
+    const startTime = Date.now();
+    let newStatus = 'Down';
+    let errorMessage = '';
+    let responseTime = null;
 
-    // Get user's websites
-    const { data: websites, error: websitesError } = await supabase
-        .from('websites')
-        .select('*')
-        .eq('user_id', userId);
+    try {
+        console.log(`🔍 Checking ${website.url}...`);
 
-    if (websitesError) {
-        console.error(`Error fetching websites for user ${userId}:`, websitesError);
-        return;
-    }
-
-    for (const site of websites) {
-        let newStatus;
+        // Method 1: Try HEAD request first (faster)
         try {
-            const response = await fetch(site.url, { 
+            const headResponse = await fetch(website.url, { 
+                method: 'HEAD',
                 timeout: 10000,
                 headers: {
-                    'User-Agent': 'UptimeMonitor/1.0'
+                    'User-Agent': 'Mozilla/5.0 (compatible; UptimeMonitor/1.0)'
                 }
             });
-            newStatus = response.ok ? 'Up' : 'Down';
-        } catch (fetchError) {
-            console.error(`Fetch error for ${site.url}:`, fetchError.message);
-            newStatus = 'Down';
-        }
-
-        if (newStatus !== site.status) {
-            const { error: updateError } = await supabase
-                .from('websites')
-                .update({ status: newStatus, last_checked: new Date().toISOString() })
-                .eq('id', site.id);
             
-            if (updateError) {
-                console.error(`Error updating status for ${site.url}:`, updateError);
+            responseTime = Date.now() - startTime;
+            
+            if (headResponse.ok) {
+                newStatus = 'Up';
+                console.log(`✅ ${website.url} is UP (${responseTime}ms)`);
             } else {
-                console.log(`Status for ${site.url} changed to ${newStatus}.`);
-                if (newStatus === 'Down' && userEmail) {
-                    await sendDownAlert(userEmail, site.url, resend, fromEmail);
+                console.log(`⚠️ ${website.url} HEAD failed: ${headResponse.status}`);
+                
+                // Method 2: Try GET request if HEAD fails
+                const getResponse = await fetch(website.url, { 
+                    method: 'GET',
+                    timeout: 15000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; UptimeMonitor/1.0)'
+                    }
+                });
+                
+                responseTime = Date.now() - startTime;
+                
+                if (getResponse.ok) {
+                    newStatus = 'Up';
+                    console.log(`✅ ${website.url} is UP via GET (${responseTime}ms)`);
+                } else {
+                    errorMessage = `HTTP ${getResponse.status}: ${getResponse.statusText}`;
+                    console.log(`❌ ${website.url} is DOWN: ${errorMessage}`);
                 }
             }
-        } else {
-            // Update last_checked even if status didn't change
-            const { error: updateError } = await supabase
-                .from('websites')
-                .update({ last_checked: new Date().toISOString() })
-                .eq('id', site.id);
-            
-            if (updateError) {
-                console.error(`Error updating last_checked for ${site.url}:`, updateError);
+        } catch (fetchError) {
+            responseTime = Date.now() - startTime;
+            errorMessage = fetchError.message;
+            console.log(`❌ ${website.url} is DOWN: ${errorMessage}`);
+        }
+
+        // Check if status changed
+        const statusChanged = newStatus !== website.status;
+        
+        // Update database
+        const { error: updateError } = await supabase
+            .from('websites')
+            .update({ 
+                status: newStatus, 
+                last_checked: new Date().toISOString(),
+                response_time: responseTime
+            })
+            .eq('id', website.id);
+
+        if (updateError) {
+            console.error(`❌ Error updating ${website.url}:`, updateError);
+            return {
+                url: website.url,
+                status: website.status,
+                error: updateError.message,
+                responseTime
+            };
+        }
+
+        // Send email alert if status changed to Down
+        if (statusChanged && newStatus === 'Down' && resend && fromEmail) {
+            try {
+                // Get user email
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('email')
+                    .eq('id', website.user_id)
+                    .single();
+
+                if (userData && userData.email) {
+                    await sendDownAlert(userData.email, website.url, resend, fromEmail, responseTime);
+                    console.log(`📧 Alert email sent for ${website.url}`);
+                }
+            } catch (emailError) {
+                console.error(`❌ Error sending alert email for ${website.url}:`, emailError);
             }
         }
+
+        return {
+            url: website.url,
+            status: newStatus,
+            previousStatus: website.status,
+            statusChanged,
+            responseTime,
+            error: errorMessage || null
+        };
+
+    } catch (error) {
+        console.error(`❌ Unexpected error checking ${website.url}:`, error);
+        return {
+            url: website.url,
+            status: 'Down',
+            error: error.message,
+            responseTime: Date.now() - startTime
+        };
     }
 }
 
-async function sendDownAlert(toEmail, url, resend, fromEmail) {
+async function sendDownAlert(toEmail, url, resend, fromEmail, responseTime) {
     try {
         const { data, error } = await resend.emails.send({
             from: `Uptime Monitor <${fromEmail}>`,
             to: [toEmail],
             subject: `🚨 Website Alert: ${url} is Down`,
-            html: `<p>This is an automated alert. We detected that your website <strong>${url}</strong> is currently down.</p>`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #dc2626;">🚨 Website Down Alert</h2>
+                    <p>We detected that your website is currently down:</p>
+                    <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <strong>Website:</strong> ${url}<br>
+                        <strong>Detected at:</strong> ${new Date().toLocaleString()}<br>
+                        <strong>Response time:</strong> ${responseTime ? responseTime + 'ms' : 'N/A'}
+                    </div>
+                    <p>Our monitoring system will continue to check your website and notify you when it comes back online.</p>
+                    <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;">
+                    <p style="color: #6b7280; font-size: 12px;">
+                        This is an automated alert from your Uptime Monitor dashboard.
+                    </p>
+                </div>
+            `,
         });
+        
         if (error) throw error;
-        console.log(`Alert email sent to ${toEmail} for site ${url}.`);
+        return data;
     } catch (error) {
         console.error('Error sending email via Resend:', error);
+        throw error;
     }
 } 
